@@ -14,6 +14,30 @@ function formatMMSS(totalSeconds: number) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+function playBeep() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx = new AudioCtx();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+
+    o.type = "sine";
+    o.frequency.value = 880; // tono
+    g.gain.value = 0.06; // volumen (bajito)
+
+    o.connect(g);
+    g.connect(ctx.destination);
+
+    o.start();
+    window.setTimeout(() => {
+      o.stop();
+      ctx.close();
+    }, 300); // duración ms
+  } catch {
+    // si el navegador bloquea audio, no hacemos nada
+  }
+}
+
 function clampInt(n: number, min: number, max: number) {
   if (!Number.isFinite(n)) return min;
   return Math.min(max, Math.max(min, Math.floor(n)));
@@ -22,6 +46,8 @@ function clampInt(n: number, min: number, max: number) {
 export default function Home() {
   // SETTINGS
   const [settings, setSettings] = React.useState<PomodoroSettings>(defaultSettings);
+  const [autoStart, setAutoStart] = React.useState(true);
+
 
   // TASKS
   const [tasks, setTasks] = React.useState<Task[]>(sampleTasks);
@@ -51,6 +77,7 @@ export default function Home() {
     setMode(nextMode);
     setSecondsLeft(minutesToSeconds(modeDurationMinutes(nextMode)));
     setRunning(false);
+    playBeep();
   }
 
   function addWorkedMinutesToActiveTask(minutes: number) {
@@ -78,27 +105,41 @@ export default function Home() {
 
   // Finish
   React.useEffect(() => {
-    if (!running) return;
-    if (secondsLeft !== 0) return;
+  if (!running) return;
+  if (secondsLeft !== 0) return;
 
-    setRunning(false);
+  // parar primero
+  setRunning(false);
 
-    if (mode === "focus") {
-      addWorkedMinutesToActiveTask(settings.focusMinutes);
+  // alarma
+  playBeep();
 
-      const nextCycle = cycleCount + 1;
-      setCycleCount(nextCycle);
+  if (mode === "focus") {
+    addWorkedMinutesToActiveTask(settings.focusMinutes);
 
-      const isLongBreak = nextCycle % settings.longBreakEvery === 0;
-      const nextMode: TimerMode = isLongBreak ? "longBreak" : "break";
+    const nextCycle = cycleCount + 1;
+    setCycleCount(nextCycle);
 
-      setMode(nextMode);
-      setSecondsLeft(minutesToSeconds(modeDurationMinutes(nextMode)));
-    } else {
-      setMode("focus");
-      setSecondsLeft(minutesToSeconds(settings.focusMinutes));
+    const isLongBreak = nextCycle % settings.longBreakEvery === 0;
+    const nextMode: TimerMode = isLongBreak ? "longBreak" : "break";
+
+    setMode(nextMode);
+    setSecondsLeft(minutesToSeconds(modeDurationMinutes(nextMode)));
+
+    if (autoStart) {
+      // arrancar el siguiente bloque
+      setTimeout(() => setRunning(true), 50);
     }
-  }, [secondsLeft, running, mode, settings, cycleCount]);
+  } else {
+    // break finished -> go focus
+    setMode("focus");
+    setSecondsLeft(minutesToSeconds(settings.focusMinutes));
+
+    if (autoStart) {
+      setTimeout(() => setRunning(true), 50);
+    }
+  }
+}, [secondsLeft, running, mode, settings, cycleCount, autoStart]);
 
   const title =
     mode === "focus" ? "Focus" : mode === "break" ? "Descanso" : "Descanso largo";
