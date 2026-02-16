@@ -22,8 +22,8 @@ function playBeep() {
     const g = ctx.createGain();
 
     o.type = "sine";
-    o.frequency.value = 880; // tono
-    g.gain.value = 0.06; // volumen (bajito)
+    o.frequency.value = 880;
+    g.gain.value = 0.06;
 
     o.connect(g);
     g.connect(ctx.destination);
@@ -32,9 +32,9 @@ function playBeep() {
     window.setTimeout(() => {
       o.stop();
       ctx.close();
-    }, 300); // duración ms
+    }, 300);
   } catch {
-    // si el navegador bloquea audio, no hacemos nada
+    // navegador puede bloquear audio
   }
 }
 
@@ -43,15 +43,34 @@ function clampInt(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Math.floor(n)));
 }
 
+function pickNextActiveTask(currentId: string, list: Task[]) {
+  const currentIndex = list.findIndex((t) => t.id === currentId);
+
+  // 1) buscar hacia delante una no completada
+  for (let i = currentIndex + 1; i < list.length; i++) {
+    if (!list[i].completed) return list[i].id;
+  }
+
+  // 2) buscar desde el inicio una no completada
+  for (let i = 0; i < list.length; i++) {
+    if (!list[i].completed) return list[i].id;
+  }
+
+  // 3) todas completadas
+  return "";
+}
+
 export default function Home() {
   // SETTINGS
-  const [settings, setSettings] = React.useState<PomodoroSettings>(defaultSettings);
+  const [settings, setSettings] =
+    React.useState<PomodoroSettings>(defaultSettings);
   const [autoStart, setAutoStart] = React.useState(true);
-
 
   // TASKS
   const [tasks, setTasks] = React.useState<Task[]>(sampleTasks);
-  const [activeTaskId, setActiveTaskId] = React.useState<string>(sampleTasks[0]?.id ?? "");
+  const [activeTaskId, setActiveTaskId] = React.useState<string>(
+    sampleTasks[0]?.id ?? ""
+  );
 
   // TIMER
   const [mode, setMode] = React.useState<TimerMode>("focus");
@@ -77,19 +96,28 @@ export default function Home() {
     setMode(nextMode);
     setSecondsLeft(minutesToSeconds(modeDurationMinutes(nextMode)));
     setRunning(false);
-    playBeep();
   }
 
   function addWorkedMinutesToActiveTask(minutes: number) {
     if (!activeTaskId) return;
-    setTasks((prev) =>
-      prev.map((t) => {
+
+    setTasks((prev) => {
+      const next = prev.map((t) => {
         if (t.id !== activeTaskId) return t;
+
         const worked = t.workedMinutes + minutes;
         const completed = worked >= t.estimateMinutes;
         return { ...t, workedMinutes: worked, completed };
-      })
-    );
+      });
+
+      const justCompleted = next.find((t) => t.id === activeTaskId)?.completed;
+      if (justCompleted) {
+        const nextId = pickNextActiveTask(activeTaskId, next);
+        setActiveTaskId(nextId);
+      }
+
+      return next;
+    });
   }
 
   // Tick
@@ -105,52 +133,49 @@ export default function Home() {
 
   // Finish
   React.useEffect(() => {
-  if (!running) return;
-  if (secondsLeft !== 0) return;
+    if (!running) return;
+    if (secondsLeft !== 0) return;
 
-  // parar primero
-  setRunning(false);
+    setRunning(false);
+    playBeep();
 
-  // alarma
-  playBeep();
+    if (mode === "focus") {
+      addWorkedMinutesToActiveTask(settings.focusMinutes);
 
-  if (mode === "focus") {
-    addWorkedMinutesToActiveTask(settings.focusMinutes);
+      const nextCycle = cycleCount + 1;
+      setCycleCount(nextCycle);
 
-    const nextCycle = cycleCount + 1;
-    setCycleCount(nextCycle);
+      const isLongBreak = nextCycle % settings.longBreakEvery === 0;
+      const nextMode: TimerMode = isLongBreak ? "longBreak" : "break";
 
-    const isLongBreak = nextCycle % settings.longBreakEvery === 0;
-    const nextMode: TimerMode = isLongBreak ? "longBreak" : "break";
+      setMode(nextMode);
+      setSecondsLeft(minutesToSeconds(modeDurationMinutes(nextMode)));
 
-    setMode(nextMode);
-    setSecondsLeft(minutesToSeconds(modeDurationMinutes(nextMode)));
+      if (autoStart) setTimeout(() => setRunning(true), 50);
+    } else {
+      setMode("focus");
+      setSecondsLeft(minutesToSeconds(settings.focusMinutes));
 
-    if (autoStart) {
-      // arrancar el siguiente bloque
-      setTimeout(() => setRunning(true), 50);
+      if (autoStart) setTimeout(() => setRunning(true), 50);
     }
-  } else {
-    // break finished -> go focus
-    setMode("focus");
-    setSecondsLeft(minutesToSeconds(settings.focusMinutes));
-
-    if (autoStart) {
-      setTimeout(() => setRunning(true), 50);
-    }
-  }
-}, [secondsLeft, running, mode, settings, cycleCount, autoStart]);
+  }, [secondsLeft, running, mode, settings, cycleCount, autoStart]);
 
   const title =
-    mode === "focus" ? "Focus" : mode === "break" ? "Descanso" : "Descanso largo";
+    mode === "focus"
+      ? "Focus"
+      : mode === "break"
+      ? "Descanso"
+      : "Descanso largo";
 
   // SETTINGS handlers
-  function updateSetting<K extends keyof PomodoroSettings>(key: K, value: number) {
+  function updateSetting<K extends keyof PomodoroSettings>(
+    key: K,
+    value: number
+  ) {
     setSettings((prev) => ({ ...prev, [key]: value }));
   }
 
   function applySettings() {
-    // Recalcular el tiempo actual con los nuevos minutos del modo actual
     setRunning(false);
     setSecondsLeft(minutesToSeconds(modeDurationMinutes(mode)));
   }
@@ -160,9 +185,12 @@ export default function Home() {
     const title = newTitle.trim();
     if (!title) return;
 
-    const estimate = clampInt(newEstimate, 1, 24 * 60); // 1 min a 24h
+    const estimate = clampInt(newEstimate, 1, 24 * 60);
     const task: Task = {
-      id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now()),
+      id:
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : String(Date.now()),
       title,
       estimateMinutes: estimate,
       workedMinutes: 0,
@@ -170,7 +198,9 @@ export default function Home() {
       createdAt: Date.now(),
     };
 
-    setTasks((prev) => [task, ...prev]);
+    // Si prefieres orden "natural", usa: setTasks((prev) => [...prev, task]);
+    setTasks((prev) => [...prev, task]);
+
     setActiveTaskId(task.id);
     setNewTitle("");
     setNewEstimate(60);
@@ -178,10 +208,10 @@ export default function Home() {
 
   function deleteTask(id: string) {
     setTasks((prev) => prev.filter((t) => t.id !== id));
+
     if (activeTaskId === id) {
-      // elige otra tarea si borras la activa
       const remaining = tasks.filter((t) => t.id !== id);
-      setActiveTaskId(remaining[0]?.id ?? "");
+      setActiveTaskId(remaining.find((t) => !t.completed)?.id ?? remaining[0]?.id ?? "");
     }
   }
 
@@ -189,6 +219,18 @@ export default function Home() {
     setTasks((prev) =>
       prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
     );
+
+    // Si completas manualmente la activa, activa la siguiente
+    if (id === activeTaskId) {
+      const current = tasks.find((t) => t.id === id);
+      if (current && !current.completed) {
+        // estaba pendiente y ahora va a completarse
+        const nextList = tasks.map((t) =>
+          t.id === id ? { ...t, completed: true } : t
+        );
+        setActiveTaskId(pickNextActiveTask(id, nextList));
+      }
+    }
   }
 
   return (
@@ -255,8 +297,18 @@ export default function Home() {
               </button>
             </div>
 
+            <label className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={autoStart}
+                onChange={(e) => setAutoStart(e.target.checked)}
+              />
+              Auto-start (cambio automático)
+            </label>
+
             <p className="mt-4 text-xs text-muted-foreground">
-              Al terminar un focus, se suman {settings.focusMinutes} min a la tarea activa.
+              Al terminar un focus, se suman {settings.focusMinutes} min a la tarea
+              activa.
             </p>
           </div>
 
@@ -275,7 +327,12 @@ export default function Home() {
                   min={1}
                   max={180}
                   value={settings.focusMinutes}
-                  onChange={(e) => updateSetting("focusMinutes", clampInt(Number(e.target.value), 1, 180))}
+                  onChange={(e) =>
+                    updateSetting(
+                      "focusMinutes",
+                      clampInt(Number(e.target.value), 1, 180)
+                    )
+                  }
                   className="mt-2 w-full rounded-lg border bg-background px-3 py-2 text-sm"
                 />
               </label>
@@ -287,7 +344,12 @@ export default function Home() {
                   min={1}
                   max={60}
                   value={settings.breakMinutes}
-                  onChange={(e) => updateSetting("breakMinutes", clampInt(Number(e.target.value), 1, 60))}
+                  onChange={(e) =>
+                    updateSetting(
+                      "breakMinutes",
+                      clampInt(Number(e.target.value), 1, 60)
+                    )
+                  }
                   className="mt-2 w-full rounded-lg border bg-background px-3 py-2 text-sm"
                 />
               </label>
@@ -299,7 +361,12 @@ export default function Home() {
                   min={1}
                   max={120}
                   value={settings.longBreakMinutes}
-                  onChange={(e) => updateSetting("longBreakMinutes", clampInt(Number(e.target.value), 1, 120))}
+                  onChange={(e) =>
+                    updateSetting(
+                      "longBreakMinutes",
+                      clampInt(Number(e.target.value), 1, 120)
+                    )
+                  }
                   className="mt-2 w-full rounded-lg border bg-background px-3 py-2 text-sm"
                 />
               </label>
@@ -311,7 +378,12 @@ export default function Home() {
                   min={2}
                   max={10}
                   value={settings.longBreakEvery}
-                  onChange={(e) => updateSetting("longBreakEvery", clampInt(Number(e.target.value), 2, 10))}
+                  onChange={(e) =>
+                    updateSetting(
+                      "longBreakEvery",
+                      clampInt(Number(e.target.value), 2, 10)
+                    )
+                  }
                   className="mt-2 w-full rounded-lg border bg-background px-3 py-2 text-sm"
                 />
               </label>
@@ -362,7 +434,9 @@ export default function Home() {
                   min={1}
                   max={1440}
                   value={newEstimate}
-                  onChange={(e) => setNewEstimate(clampInt(Number(e.target.value), 1, 1440))}
+                  onChange={(e) =>
+                    setNewEstimate(clampInt(Number(e.target.value), 1, 1440))
+                  }
                   className="w-28 rounded-lg border bg-background px-3 py-2 text-sm"
                   title="Minutos estimados"
                 />
@@ -377,18 +451,25 @@ export default function Home() {
 
             <div className="mt-6 grid gap-3 md:grid-cols-2">
               {tasks.map((t) => {
-                const pct = Math.min(100, (t.workedMinutes / t.estimateMinutes) * 100);
+                const pct = Math.min(
+                  100,
+                  (t.workedMinutes / t.estimateMinutes) * 100
+                );
                 const isActive = t.id === activeTaskId;
 
                 return (
                   <div
                     key={t.id}
-                    className={`rounded-xl border p-4 ${isActive ? "border-primary/50" : ""}`}
+                    className={`rounded-xl border p-4 ${
+                      isActive ? "border-primary/50" : ""
+                    }`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <p className="truncate text-sm font-medium">{t.title}</p>
+                          <p className="truncate text-sm font-medium">
+                            {t.title}
+                          </p>
                           {t.completed ? (
                             <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                               Completada
@@ -437,7 +518,9 @@ export default function Home() {
             </div>
 
             {tasks.length === 0 ? (
-              <p className="mt-6 text-sm text-muted-foreground">No hay tareas aún.</p>
+              <p className="mt-6 text-sm text-muted-foreground">
+                No hay tareas aún.
+              </p>
             ) : null}
           </div>
         </section>
