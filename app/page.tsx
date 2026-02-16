@@ -4,6 +4,8 @@ import * as React from "react";
 import type { PomodoroSettings, Task, TimerMode } from "@/lib/types";
 import { defaultSettings, sampleTasks } from "@/data/defaults";
 
+import { LofiWidget } from "@/components/LofiWidget";
+
 function minutesToSeconds(m: number) {
   return Math.max(0, Math.floor(m * 60));
 }
@@ -240,6 +242,7 @@ export default function Home() {
   }
 
   return (
+    <>
     <main className="min-h-screen px-6 py-12">
       <div className="mx-auto max-w-4xl">
         <header className="flex items-start justify-between gap-4">
@@ -489,5 +492,7 @@ export default function Home() {
         </section>
       </div>
     </main>
+    <LofiWidget />
+    </>
   );
 }
